@@ -1,0 +1,49 @@
+<html>
+<head>
+</head>
+<body>
+
+<canvas id="glview" width="600" height="400"></canvas>
+<br>
+<input id="import" type="file"/>
+
+<script id="vs" type="x-shader/x-vertex">#version 300 es
+in vec4 position;
+in vec3 normal;
+out vec3 fPos;
+out vec3 fNrm;
+uniform mat4 modelViewMatrix;
+uniform mat4 projMatrix;
+void main() {
+    vec4 pos = modelViewMatrix * position;
+    fPos = pos.xyz;
+    gl_Position = projMatrix * pos;
+    fNrm = transpose(inverse(mat3(modelViewMatrix))) * normal;
+}
+</script>
+
+<script id="fs" type="x-shader/x-fragment">#version 300 es
+precision mediump float;
+in vec3 fPos;
+in vec3 fNrm;
+out vec4 color;
+void main(){
+    //color = vec4(0.0, 1.0, 0.0, 1.0);
+
+    vec4 lightPos = vec4(1.0, 1.0, 1.0, 0.0);
+    float shininess = 1.0;
+    float ambient = 0.1;
+    vec3 col = vec3(0.0, 0.8, 0.0);
+
+    vec3 light = normalize((lightPos - vec4(fPos, 1) * lightPos.w).xyz);
+    vec3 nrm = normalize(fNrm);
+    float diffuse = max(dot(light, nrm), 0.0);
+    float specular = 0.0; // pow(max(dot(nrm, normalize(light - normalize(fPos))), 0.0), shininess);
+
+    color = vec4((diffuse + specular + ambient) * col, 1);
+}
+</script>
+
+<script src="render.js"></script>
+</body>
+</html>
