@@ -216,6 +216,8 @@ function makeProjMatrix(world: Sphere, scale: number, canvasWidth: number, canva
 class Camera {
     focus: RigidTrans;
     scale: number;
+    modelViewMatrix: number[];
+    projectionMatrix: number[];
     constructor(focus: RigidTrans, scale: number) {
         this.focus = focus;
         this.scale = scale;
@@ -224,12 +226,11 @@ class Camera {
         this.focus.t = world.center;
         this.scale = world.radius;
     }
-    getModelViewMatrix() {
-        return this.focus.inverse().toMatrix();
-    }
-    getProjectionMatrix(world: Sphere, canvasWidth: number, canvasHeight: number) {
-        const center = this.focus.inverse().transform(world.center);
-        return makeProjMatrix(new Sphere(center, world.radius), this.scale, canvasWidth, canvasHeight);
+    update(world: Sphere, canvasWidth: number, canvasHeight: number) {
+        const inv = this.focus.inverse();
+        const center = inv.transform(world.center);
+        this.modelViewMatrix = inv.toMatrix();
+        this.projectionMatrix = makeProjMatrix(new Sphere(center, world.radius), this.scale, canvasWidth, canvasHeight);
     }
 }
 
@@ -248,8 +249,7 @@ function buildShader(type: number, src: string): WebGLShader {
     return shader;
 }
 
-function createProgram(srcV: string, srcF: string): WebGLProgram
-{
+function createProgram(srcV: string, srcF: string): WebGLProgram {
     const shaderV = buildShader(gl.VERTEX_SHADER, srcV);
     const shaderF = buildShader(gl.FRAGMENT_SHADER, srcF);
     const program = gl.createProgram();
@@ -264,11 +264,24 @@ function createProgram(srcV: string, srcF: string): WebGLProgram
     return program;
 }
 
-class Drawer {
+interface Drawable {
+    draw(camera: Camera): void;
+}
+
+class TrianglesDrawer implements Drawable {
+    private static program = createProgram(
+        document.getElementById("vs").textContent,
+        document.getElementById("fs").textContent);
+    private static atrPosition = gl.getAttribLocation(TrianglesDrawer.program, "position");
+    private static atrNormal = gl.getAttribLocation(TrianglesDrawer.program, "normal");
+    private static uniModelViewMatrix = gl.getUniformLocation(TrianglesDrawer.program, "modelViewMatrix");
+    private static uniProjMatrix = gl.getUniformLocation(TrianglesDrawer.program, "projMatrix");
+
     private count: number;
     private points: WebGLBuffer;
     private normals: WebGLBuffer;
     private boundary: Sphere;
+
     constructor(points: Float32Array, normals: Float32Array) {
         if (points.length != normals.length) throw new Error("points.length != normals.length");
         this.count = points.length / 3;
@@ -280,13 +293,19 @@ class Drawer {
         gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
         this.boundary = Box3.boundaryOf(points).boundingSphere();
     }
-    draw(posAtr: number, nrmAtr: number) {
-        gl.enableVertexAttribArray(posAtr);
+    draw(camera: Camera) {
+        gl.useProgram(TrianglesDrawer.program);
+        gl.uniformMatrix4fv(TrianglesDrawer.uniModelViewMatrix, true, camera.modelViewMatrix);
+        gl.uniformMatrix4fv(TrianglesDrawer.uniProjMatrix, true, camera.projectionMatrix);
+
         gl.bindBuffer(gl.ARRAY_BUFFER, this.points);
-        gl.vertexAttribPointer(posAtr, 3, gl.FLOAT, false, 0, 0);
-        gl.enableVertexAttribArray(nrmAtr);
+        gl.enableVertexAttribArray(TrianglesDrawer.atrPosition);
+        gl.vertexAttribPointer(TrianglesDrawer.atrPosition, 3, gl.FLOAT, false, 0, 0);
+
         gl.bindBuffer(gl.ARRAY_BUFFER, this.normals);
-        gl.vertexAttribPointer(nrmAtr, 3, gl.FLOAT, true, 0, 0);
+        gl.enableVertexAttribArray(TrianglesDrawer.atrNormal);
+        gl.vertexAttribPointer(TrianglesDrawer.atrNormal, 3, gl.FLOAT, true, 0, 0);
+
         gl.drawArrays(gl.TRIANGLES, 0, this.count);
     }
     boundingSphere(): Sphere {
@@ -294,30 +313,33 @@ class Drawer {
     }
 }
 
-class VertexArray {
-    points: Float32Array;
-    normals: Float32Array;
-    constructor(len: number) {
-        this.points = new Float32Array(3 * len);
-        this.normals = new Float32Array(3 * len);
+function importSTL(data: ArrayBuffer) {
+    const isLittleEndian = true;
+    const view = new DataView(data);
+    const ntris = view.getUint32(80, true); // little endian を指定する必要あり
+    console.log("ntris = " + ntris);
+    const points = new Float32Array(3 * 3 * ntris);
+    const normals = new Float32Array(3 * 3 * ntris);
+    for (let i = 0; i < ntris; ++i) {
+        let pos = 84 + i * 50;
+        function read() { pos += 4; return view.getFloat32(pos - 4, isLittleEndian); }
+        const nx = read();
+        const ny = read();
+        const nz = read();
+        for (let k = 0; k < 3; ++k) {
+            const idx = 3 * (3 * i + k);
+            normals[idx + 0] = nx;
+            normals[idx + 1] = ny;
+            normals[idx + 2] = nz;
+            points[idx + 0] = read();
+            points[idx + 1] = read();
+            points[idx + 2] = read();
+        }
     }
-    setVertex(i: number, px: number, py: number, pz: number, nx: number, ny: number, nz: number) {
-        //px /= 10; py /= 10; pz /= 10;
-        this.points[3 * i + 0] = px;
-        this.points[3 * i + 1] = py;
-        this.points[3 * i + 2] = pz;
-        this.normals[3 * i + 0] = nx;
-        this.normals[3 * i + 1] = ny;
-        this.normals[3 * i + 2] = nz;
-        //console.log("p = (" + px + ", " + py + ", " + pz + ")");
-        //console.log("n = (" + nx + ", " + ny + ", " + nz + ")");
-    }
-    toDrawer() {
-        return new Drawer(this.points, this.normals);
-    }
+    return new TrianglesDrawer(points, normals);
 }
 
-let drawer = new Drawer(
+let drawer = new TrianglesDrawer(
     new Float32Array([
         0.0, 1.0, 0.0,
         -1.0, -1.0, 0.0,
@@ -335,38 +357,13 @@ let camera = new Camera(RigidTrans.unit(), 1.5);
 document.getElementById("import").addEventListener("change", e => {
     const reader = new FileReader();
     reader.onload = () => {
-        const view = new DataView(<ArrayBuffer>reader.result);
-        const ntris = view.getUint32(80, true); // little endian を指定する必要あり
-        console.log("ntris = " + ntris);
-        const va = new VertexArray(3 * ntris);
-        for (let i = 0; i < ntris; ++i) {
-            let pos = 84 + i * 50;
-            const nx = view.getFloat32(pos, true); pos += 4;
-            const ny = view.getFloat32(pos, true); pos += 4;
-            const nz = view.getFloat32(pos, true); pos += 4;
-            for (let k = 0; k < 3; ++k) {
-                const px = view.getFloat32(pos, true); pos += 4;
-                const py = view.getFloat32(pos, true); pos += 4;
-                const pz = view.getFloat32(pos, true); pos += 4;
-                va.setVertex(3 * i + k, px, py, pz, nx, ny, nz);
-            }
-        }
-        drawer = va.toDrawer();
+        drawer = importSTL(<ArrayBuffer>reader.result);
         camera.fit(drawer.boundingSphere());
     };
     const file = (<HTMLInputElement>e.target).files[0];
     reader.readAsArrayBuffer(file);
 }, false);
 
-const program = createProgram(
-    document.getElementById("vs").textContent,
-    document.getElementById("fs").textContent);
-
-gl.useProgram(program);
-const positionAttrib = gl.getAttribLocation(program, "position");
-const normalAttrib = gl.getAttribLocation(program, "normal");
-const modelViewMatrix = gl.getUniformLocation(program, "modelViewMatrix");
-const projMatrix = gl.getUniformLocation(program, "projMatrix");
 
 gl.clearColor(0.3, 0.3, 0.3, 1);
 
@@ -379,9 +376,8 @@ gl.depthFunc(gl.GREATER);
 let time = 0;
 setInterval(() => {
     camera.focus.r = Rotation.ofAxis(new Vec3(0.3, 1, 0), time * 0.01 * Math.PI);
-    gl.uniformMatrix4fv(modelViewMatrix, true, camera.getModelViewMatrix());
-    gl.uniformMatrix4fv(projMatrix, true, camera.getProjectionMatrix(drawer.boundingSphere(), canvas.width, canvas.height));
+    camera.update(drawer.boundingSphere(), canvas.width, canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    drawer.draw(positionAttrib, normalAttrib);
+    drawer.draw(camera);
     ++time;
 }, 30);
