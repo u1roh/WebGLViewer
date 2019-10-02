@@ -216,31 +216,32 @@ class RigidTrans {
     }
 }
 
-function orthoProj(volume: Box3) {
-    const c = volume.center();
-    const w = volume.x.upper - c.x;
-    const h = volume.y.upper - c.y;
-    const d = volume.z.upper - c.z;
-    return [
-        1 / w, 0, 0, -c.x / w,
-        0, 1 / h, 0, -c.y / h,
-        0, 0, 1 / d, -c.z / d,
-        0, 0, 0, 1
-    ];
-}
-
-function makeProjMatrix(depth: Interval, scale: number, canvasWidth: number, canvasHeight: number) {
-    const [w, h] = (canvasWidth < canvasHeight) ?
-        [scale, scale * canvasHeight / canvasWidth] :
-        [scale * canvasWidth / canvasHeight, scale];
-    const volume = new Box3(
-        new Interval(-w, w),
-        new Interval(-h, h),
-        depth);
-    return orthoProj(volume);
-}
 
 class Camera {
+    private static orthoMatrix(volume: Box3) {
+        const c = volume.center();
+        const w = volume.x.upper - c.x;
+        const h = volume.y.upper - c.y;
+        const d = volume.z.upper - c.z;
+        return [
+            1 / w, 0, 0, -c.x / w,
+            0, 1 / h, 0, -c.y / h,
+            0, 0, 1 / d, -c.z / d,
+            0, 0, 0, 1
+        ];
+    }
+    private static makeProjMatrix(depth: Interval, scale: number, canvasWidth: number, canvasHeight: number) {
+        console.log("makeProjMatrix: canvasWidth = " + canvasWidth + ", canvasHeight = " + canvasHeight);
+        const [w, h] = (canvasWidth < canvasHeight) ?
+            [scale, scale * canvasHeight / canvasWidth] :
+            [scale * canvasWidth / canvasHeight, scale];
+        const volume = new Box3(
+            new Interval(-w, w),
+            new Interval(-h, h),
+            depth);
+        return this.orthoMatrix(volume);
+    }
+
     focus: RigidTrans;
     scale: number;
     modelViewMatrix: number[];
@@ -270,8 +271,105 @@ class Camera {
         const center = inv.transform(world.center);
         const depth = new Interval(center.z - world.radius, center.z + world.radius);
         this.modelViewMatrix = inv.toMatrix();
-        this.projectionMatrix = makeProjMatrix(depth, this.scale, canvasWidth, canvasHeight);
+        this.projectionMatrix = Camera.makeProjMatrix(depth, this.scale, canvasWidth, canvasHeight);
     }
+}
+
+interface Drawable {
+    draw(camera: Camera): void;
+    boundingSphere(): Sphere;
+}
+
+interface DrawableSource {
+    createDrawer(gl: WebGLRenderingContext): Drawable;
+}
+
+class Viewer {
+    canvas: HTMLCanvasElement;
+    gl: WebGLRenderingContext;
+    camera = new Camera(RigidTrans.unit(), 1.0);
+    scene: Drawable | null = null;
+    world: Sphere = new Sphere(Vec3.zero(), 1.0);
+    constructor(canvas: HTMLCanvasElement) {
+        const gl = <WebGLRenderingContext>canvas.getContext("webgl2");
+        this.canvas = canvas;
+        this.gl = gl;
+
+        gl.clearColor(0.3, 0.3, 0.3, 1);
+
+        // Projection Matrix で視線方向を反転させていないので（つまり右手系のままなので）、
+        // 通常の OpenGL と違ってデプス値はゼロで初期化して depthFunc を GL_GREATER にする。
+        gl.clearDepth(0.0);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.GREATER);
+
+        canvas.oncontextmenu = function() { return false; };    // disable context menu
+        canvas.addEventListener("mousedown", e => {
+            const scale = this.camera.scale;
+            const focus = this.camera.focus.clone();
+            const lengthPerPixel = this.lengthPerPixel();
+            const [x0, y0] = [e.offsetX, e.offsetY];
+            const onMouseMove = (e: MouseEvent) => {
+                const dx = e.offsetX - x0;
+                const dy = e.offsetY - y0;
+                const move = focus.r.transform(new Vec3(lengthPerPixel * dx, -lengthPerPixel * dy, 0));
+                if (e.shiftKey) {
+                    this.camera.focus.t = focus.t.sub(move);
+                }
+                else if(e.ctrlKey) {
+                    const y = Math.abs(dy) / 40;
+                    const factor = dy > 0 ? 1.0 / (1 + y) : 1 + y;
+                    this.camera.scale = factor * scale;
+                }
+                else {
+                    const axis = move.cross(focus.r.n());
+                    const radian = move.length() / this.camera.scale;
+                    this.camera.focus.r = Rotation.ofAxis(axis, radian).mul(focus.r);
+                }
+                this.render();
+            };
+            const onMouseUp = (e: MouseEvent) => {
+                document.removeEventListener("mousemove", onMouseMove);
+                document.removeEventListener("mouseup", onMouseUp);
+            };
+            document.addEventListener("mousemove", onMouseMove);
+            document.addEventListener("mouseup", onMouseUp);
+        });
+        canvas.addEventListener("wheel", e => {
+            const y = 0.1 * Math.abs(e.deltaY) / 100;
+            const factor = e.deltaY > 0 ? 1 / (1 + y) : 1 + y;
+            this.camera.scale *= factor;
+            this.render();
+        });
+    }
+    setScene(source: DrawableSource) {
+        this.scene = source.createDrawer(this.gl);
+        this.world = this.scene.boundingSphere();
+    }
+    fit() {
+        this.camera.fit(this.world);
+    }
+    render() {
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+        this.camera.update(this.world, this.canvas.width, this.canvas.height);
+        if (this.scene != null) {
+            this.scene.draw(this.camera);
+        }
+    }
+    lengthPerPixel() {
+        return 2 * this.camera.scale / Math.min(this.canvas.width, this.canvas.height);
+    }
+    resize(width: number, height: number) {
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        this.render();
+    }
+    resizeToWindow() {
+        const rect = this.canvas.getBoundingClientRect();
+        const margin = rect.left;
+        this.resize(window.innerWidth - 2 * margin, window.innerHeight - rect.top - margin);
+   }
 }
 
 function buildShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader {
@@ -303,15 +401,6 @@ function createProgram(gl: WebGLRenderingContext, srcV: string, srcF: string): W
         throw new Error("Link Error");
 
     return program;
-}
-
-interface Drawable {
-    draw(camera: Camera): void;
-    boundingSphere(): Sphere;
-}
-
-interface DrawableSource {
-    createDrawer(gl: WebGLRenderingContext): Drawable;
 }
 
 class TrianglesDrawerProgram {
@@ -398,7 +487,33 @@ class Triangles implements DrawableSource {
     createDrawer(gl: WebGLRenderingContext) {
         return new TrianglesDrawer(TrianglesDrawerProgram.get(gl), this.points, this.normals);
     }
-    static importSTL(data: ArrayBuffer) {
+}
+
+namespace ArrayBuf {
+    export function readFile(file: File): Promise<ArrayBuffer> {
+        return new Promise<ArrayBuffer>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(<ArrayBuffer>reader.result);
+            reader.readAsArrayBuffer(file);
+        });
+    }
+    export function readURL(url: string): Promise<ArrayBuffer> {
+        return new Promise<ArrayBuffer>(resolve => {
+            const xhr = new XMLHttpRequest();
+            xhr.responseType = 'arraybuffer';
+            xhr.open("GET", url, true);
+            xhr.onreadystatechange = e => {
+                if (xhr.readyState == 4 && xhr.status == 200) {
+                    resolve(<ArrayBuffer>xhr.response);
+                }
+            };
+            xhr.send(null);
+        });
+    }
+}
+
+namespace STLFormat {
+    function readBuf(data: ArrayBuffer) {
         const isLittleEndian = true;
         const view = new DataView(data);
         const ntris = view.getUint32(80, true); // little endian を指定する必要あり
@@ -423,109 +538,38 @@ class Triangles implements DrawableSource {
         }
         return new Triangles(points, normals);
     }
-}
 
-class Viewer {
-    canvas: HTMLCanvasElement;
-    gl: WebGLRenderingContext;
-    camera = new Camera(RigidTrans.unit(), 1.0);
-    scene: Drawable | null = null;
-    world: Sphere = new Sphere(Vec3.zero(), 1.0);
-    constructor(canvas: HTMLCanvasElement) {
-        const gl = <WebGLRenderingContext>canvas.getContext("webgl2");
-        this.canvas = canvas;
-        this.gl = gl;
+    export async function readFile(file: File): Promise<Triangles> {
+        const buf = await ArrayBuf.readFile(file);
+        return readBuf(buf);
+    }
 
-        gl.clearColor(0.3, 0.3, 0.3, 1);
-
-        // Projection Matrix で視線方向を反転させていないので（つまり右手系のままなので）、
-        // 通常の OpenGL と違ってデプス値はゼロで初期化して depthFunc を GL_GREATER にする。
-        gl.clearDepth(0.0);
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthFunc(gl.GREATER);
-
-        canvas.oncontextmenu = function() { return false; };    // disable context menu
-        canvas.addEventListener("mousedown", e => {
-            const scale = this.camera.scale;
-            const focus = this.camera.focus.clone();
-            const lengthPerPixel = this.lengthPerPixel();
-            const [x0, y0] = [e.offsetX, e.offsetY];
-            const onMouseMove = (e: MouseEvent) => {
-                const dx = e.offsetX - x0;
-                const dy = e.offsetY - y0;
-                const move = focus.r.transform(new Vec3(lengthPerPixel * dx, -lengthPerPixel * dy, 0));
-                if (e.shiftKey) {
-                    this.camera.focus.t = focus.t.sub(move);
-                }
-                else if(e.ctrlKey) {
-                    const y = Math.abs(dy) / 40;
-                    const factor = dy > 0 ? 1.0 / (1 + y) : 1 + y;
-                    this.camera.scale = factor * scale;
-                }
-                else {
-                    const axis = move.cross(focus.r.n());
-                    const radian = move.length() / this.camera.scale;
-                    this.camera.focus.r = Rotation.ofAxis(axis, radian).mul(focus.r);
-                }
-                this.render();
-            };
-            const onMouseUp = (e: MouseEvent) => {
-                document.removeEventListener("mousemove", onMouseMove);
-                document.removeEventListener("mouseup", onMouseUp);
-            };
-            document.addEventListener("mousemove", onMouseMove);
-            document.addEventListener("mouseup", onMouseUp);
-        });
-        canvas.addEventListener("wheel", e => {
-            const y = 0.1 * Math.abs(e.deltaY) / 100;
-            const factor = e.deltaY > 0 ? 1 / (1 + y) : 1 + y;
-            this.camera.scale *= factor;
-            this.render();
-        });
-    }
-    setScene(source: DrawableSource) {
-        this.scene = source.createDrawer(this.gl);
-        this.world = this.scene.boundingSphere();
-    }
-    fit() {
-        this.camera.fit(this.world);
-    }
-    render() {
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-        this.camera.update(this.world, this.canvas.width, this.canvas.height);
-        if (this.scene != null) {
-            this.scene.draw(this.camera);
-        }
-    }
-    lengthPerPixel() {
-        return 2 * this.camera.scale / Math.min(this.canvas.width, this.canvas.height);
+    export async function readURL(url: string) {
+        const buf = await ArrayBuf.readURL(url);
+        return readBuf(buf);
     }
 }
 
 const viewer = new Viewer(<HTMLCanvasElement>document.getElementById("glview"));
-viewer.setScene(new Triangles(
-    new Float32Array([
-        0.0, 1.0, 0.0,
-        -1.0, -1.0, 0.0,
-        1.0, -1.0, 0.0
-    ]),
-    new Float32Array([
-        0, 0, 1,
-        0, 0, 1,
-        0, 0, 1,
-    ])
-));
+viewer.resizeToWindow();
 
+STLFormat.readURL("dragon.stl").then(tris => {
+    viewer.setScene(tris);
+    viewer.fit();
+    viewer.render();
+});
+
+window.addEventListener("resize", _ => viewer.resizeToWindow());
 document.getElementById("import")!.addEventListener("change", e => {
-    const reader = new FileReader();
-    reader.onload = () => {
-        viewer.setScene(Triangles.importSTL(<ArrayBuffer>reader.result));
-        viewer.fit();
-        viewer.render();
-    };
     const files = (<HTMLInputElement>e.target).files;
-    if (files != null && files.length >= 1) reader.readAsArrayBuffer(files[0]);
-}, false);
+    if (files != null && files.length >= 1) {
+        STLFormat.readFile(files[0]).then(tris => {
+            viewer.setScene(tris);
+            viewer.fit();
+            viewer.render();
+        });
+    }
+});
 
 
 viewer.render();
