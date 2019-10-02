@@ -553,7 +553,7 @@ namespace STLFormat {
 const viewer = new Viewer(<HTMLCanvasElement>document.getElementById("glview"));
 viewer.resizeToWindow();
 
-STLFormat.readURL("dragon.stl").then(tris => {
+STLFormat.readURL("sample.stl").then(tris => {
     viewer.setScene(tris);
     viewer.fit();
     viewer.render();
