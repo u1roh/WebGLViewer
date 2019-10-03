@@ -1,3 +1,4 @@
+// Copyright (c) 2019 u_1roh
 
 class Vec3 {
     x: number; y: number; z: number;
@@ -231,7 +232,6 @@ class Camera {
         ];
     }
     private static makeProjMatrix(depth: Interval, scale: number, canvasWidth: number, canvasHeight: number) {
-        console.log("makeProjMatrix: canvasWidth = " + canvasWidth + ", canvasHeight = " + canvasHeight);
         const [w, h] = (canvasWidth < canvasHeight) ?
             [scale, scale * canvasHeight / canvasWidth] :
             [scale * canvasWidth / canvasHeight, scale];
@@ -290,8 +290,8 @@ class Viewer {
     camera = new Camera(RigidTrans.unit(), 1.0);
     scene: Drawable | null = null;
     world: Sphere = new Sphere(Vec3.zero(), 1.0);
-    constructor(canvas: HTMLCanvasElement) {
-        const gl = <WebGLRenderingContext>canvas.getContext("webgl2");
+    constructor(canvas: HTMLCanvasElement, useWebGL2: boolean) {
+        const gl = <WebGLRenderingContext>canvas.getContext(useWebGL2 ? "webgl2" : "webgl");
         this.canvas = canvas;
         this.gl = gl;
 
@@ -517,7 +517,6 @@ namespace STLFormat {
         const isLittleEndian = true;
         const view = new DataView(data);
         const ntris = view.getUint32(80, true); // little endian を指定する必要あり
-        console.log("ntris = " + ntris);
         const points = new Float32Array(3 * 3 * ntris);
         const normals = new Float32Array(3 * 3 * ntris);
         for (let i = 0; i < ntris; ++i) {
@@ -550,7 +549,7 @@ namespace STLFormat {
     }
 }
 
-const viewer = new Viewer(<HTMLCanvasElement>document.getElementById("glview"));
+const viewer = new Viewer(<HTMLCanvasElement>document.getElementById("glview"), true);
 viewer.resizeToWindow();
 
 STLFormat.readURL("sample.stl").then(tris => {

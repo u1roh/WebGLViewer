@@ -5,12 +5,13 @@
 </head>
 <body>
 
-<h1>STL Viewer (Under development)</h1>
-
+<p>STL Viewer 試作品 (&copy;2019 u_1roh)</p>
+<p>【ビュー操作】 drag: 回転, shift+drag: 平行移動, ctrl+drag: 拡大縮小, wheel: 拡大縮小</p>
+<p>※ バイナリ形式の STL ファイルのみに対応しています。テキスト形式のSTLは読めません。<br>
 <input id="import" type="file" accept=".stl"/><br>
 <div style="margin: 10px">
-<canvas id="glview" width="600" height="400"></canvas>
-</div>
+<canvas id="glview" width="600" height="400">WebGL 2.0 must be supported.</canvas>
+</div></p>
 
 <script id="vs" type="x-shader/x-vertex">#version 300 es
 in vec4 position;
