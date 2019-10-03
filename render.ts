@@ -179,9 +179,9 @@ class Rotation {
         const zx = q.z * q.x;
 
         return [
-            ww + xx - yy - zz, 2 * (xy - wz), 2 * (zx + wy), 0,
-            2 * (xy + wz), ww - xx + yy - zz, 2 * (yz - wx), 0,
-            2 * (zx - wy), 2 * (yz + wx), ww - xx - yy + zz, 0,
+            ww + xx - yy - zz, 2 * (xy + wz), 2 * (zx - wy), 0,
+            2 * (xy - wz), ww - xx + yy - zz, 2 * (yz + wx), 0,
+            2 * (zx + wy), 2 * (yz - wx), ww - xx - yy + zz, 0,
             0, 0, 0, 1
         ];
     }
@@ -210,9 +210,9 @@ class RigidTrans {
     }
     toMatrix(): number[] {
         let mat = this.r.toMatrix();
-        mat[3]  = this.t.x;
-        mat[7]  = this.t.y;
-        mat[11] = this.t.z;
+        mat[12] = this.t.x;
+        mat[13] = this.t.y;
+        mat[14] = this.t.z;
         return mat;
     }
 }
@@ -225,10 +225,10 @@ class Camera {
         const h = volume.y.upper - c.y;
         const d = volume.z.upper - c.z;
         return [
-            1 / w, 0, 0, -c.x / w,
-            0, 1 / h, 0, -c.y / h,
-            0, 0, 1 / d, -c.z / d,
-            0, 0, 0, 1
+            1 / w, 0, 0, 0,
+            0, 1 / h, 0, 0,
+            0, 0, 1 / d, 0,
+            -c.x / w, -c.y / w, -c.z / d, 1
         ];
     }
     private static makeProjMatrix(depth: Interval, scale: number, canvasWidth: number, canvasHeight: number) {
@@ -408,7 +408,7 @@ class TrianglesDrawerProgram {
     static get(gl: WebGLRenderingContext) {
         let instance = this.registry.get(gl);
         if(instance == undefined) {
-            instance = new TrianglesDrawerProgram(gl);
+            instance = new TrianglesDrawerProgram(gl, useWebGL2);
             this.registry.set(gl, instance);
         }
         return instance;
@@ -420,12 +420,12 @@ class TrianglesDrawerProgram {
     private atrNormal: number;
     private uniModelViewMatrix: WebGLUniformLocation;
     private uniProjMatrix: WebGLUniformLocation;
-    constructor(gl: WebGLRenderingContext) {
+    constructor(gl: WebGLRenderingContext, useWebGL2: boolean) {
         this.gl = gl;
         this.program = createProgram(
             gl,
-            document.getElementById("vs")!.textContent!,
-            document.getElementById("fs")!.textContent!);
+            document.getElementById(useWebGL2 ? "vs2" : "vs")!.textContent!,
+            document.getElementById(useWebGL2 ? "fs2" : "fs")!.textContent!);
         this.atrPosition = gl.getAttribLocation(this.program, "position");
         this.atrNormal = gl.getAttribLocation(this.program, "normal");
         this.uniModelViewMatrix = gl.getUniformLocation(this.program, "modelViewMatrix")!;
@@ -440,8 +440,8 @@ class TrianglesDrawerProgram {
     draw(camera: Camera, points: WebGLBuffer, normals: WebGLBuffer, count: number) {
         const gl = this.gl;
         gl.useProgram(this.program);
-        gl.uniformMatrix4fv(this.uniModelViewMatrix, true, camera.modelViewMatrix);
-        gl.uniformMatrix4fv(this.uniProjMatrix, true, camera.projectionMatrix);
+        gl.uniformMatrix4fv(this.uniModelViewMatrix, false, camera.modelViewMatrix);
+        gl.uniformMatrix4fv(this.uniProjMatrix, false, camera.projectionMatrix);
 
         gl.bindBuffer(gl.ARRAY_BUFFER, points);
         gl.enableVertexAttribArray(this.atrPosition);
@@ -549,7 +549,8 @@ namespace STLFormat {
     }
 }
 
-const viewer = new Viewer(<HTMLCanvasElement>document.getElementById("glview"), true);
+const useWebGL2 = false;
+const viewer = new Viewer(<HTMLCanvasElement>document.getElementById("glview"), useWebGL2);
 viewer.resizeToWindow();
 
 STLFormat.readURL("sample.stl").then(tris => {
