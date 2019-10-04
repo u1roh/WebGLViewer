@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 use js_sys::*;
+mod vecmath;
 
 #[wasm_bindgen]
 extern {
