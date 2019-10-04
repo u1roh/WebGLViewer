@@ -1,3 +1,5 @@
+import init, { add, greet, accept_array, gen_array } from "./wasmlib.js";
+
 // Copyright (c) 2019 u_1roh
 
 class Vec3 {
@@ -581,3 +583,12 @@ setInterval(() => {
     ++time;
 }, 30);
 */
+
+document.getElementById("wasmtest")!.addEventListener("click", e => {
+    init().then(() => {
+        alert("30 + 40 = " + add(30, 40));
+        greet();
+        accept_array(new Float32Array([1, 2, 3, 4, 5, 6]));
+        console.dir(gen_array());
+    });
+});

@@ -5,7 +5,8 @@
 </head>
 <body>
 
-<p>STL Viewer 試作品 (&copy;2019 u_1roh)</p>
+<p>STL Viewer 試作品 (&copy;2019 u_1roh)
+<span id="wasmtest" style="color: skyblue; background-color: blue; padding: 4px; float: right">WASM Test</span></p>
 <p>【ビュー操作】 drag: 回転, shift+drag: 平行移動, ctrl+drag: 拡大縮小, wheel: 拡大縮小</p>
 <p>※ バイナリ形式の STL ファイルのみに対応しています。テキスト形式のSTLは読めません。<br>
 <input id="import" type="file" accept=".stl"/><br>
@@ -83,6 +84,7 @@ void main(){
 </script>
 -->
 
-<script src="render.js"></script>
+<script type="module" src="render.js"></script>
+
 </body>
 </html>
